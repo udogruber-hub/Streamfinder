@@ -2,8 +2,10 @@
   "name": "StreamFinder",
   "short_name": "StreamFinder",
   "description": "Dein persoenlicher Streaming-Guide",
-  "start_url": "./",
+  "start_url": "./index.html",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#0a0a0f",
   "theme_color": "#0a0a0f"
 }
+

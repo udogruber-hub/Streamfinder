@@ -123,6 +123,10 @@ function searchTitles(apiKey, query) {
   return tmdbFetch("/search/multi", apiKey, { query: query });
 }
 
+function getSimilar(apiKey, mediaType, id) {
+  return tmdbFetch("/" + mediaType + "/" + id + "/similar", apiKey, {});
+}
+
 // ── Components ──
 
 function ApiKeyScreen(props) {
@@ -225,6 +229,7 @@ function OnboardingQuiz(props) {
       currentMood: mood,
       liked: [],
       disliked: [],
+      watched: [],
     });
   }
 
@@ -332,9 +337,12 @@ function TitleCard(props) {
   var apiKey = props.apiKey;
   var onLike = props.onLike;
   var onDislike = props.onDislike;
+  var onWatched = props.onWatched;
+  var onSimilar = props.onSimilar;
   var rank = props.rank;
   var pl = props.platform;
   var isLiked = profile.liked.includes(item.id);
+  var isWatched = profile.watched && profile.watched.some(function(w) { return w.id === item.id; });
   var _exp = useState(false); var expanded = _exp[0]; var setExpanded = _exp[1];
   var _det = useState(null); var details = _det[0]; var setDetails = _det[1];
   var _ld = useState(false); var loadingDet = _ld[0]; var setLoadingDet = _ld[1];
@@ -467,19 +475,38 @@ function TitleCard(props) {
           ) : null}
 
           {/* Actions */}
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button onClick={function(e) { e.stopPropagation(); onLike(item.id); }} style={{
               flex: 1, padding: "10px", borderRadius: 12,
               background: isLiked ? "#E5091422" : "#0d0d18",
               border: isLiked ? "1px solid #E5091455" : "1px solid #1a1a2e",
               color: isLiked ? "#E50914" : "#666", cursor: "pointer",
-              fontFamily: "'DM Sans'", fontWeight: 700, fontSize: 13,
-            }}>{isLiked ? "❤️ Gefällt mir" : "🤍 Merken"}</button>
+              fontFamily: "'DM Sans'", fontWeight: 700, fontSize: 12, minWidth: 0,
+            }}>{isLiked ? "❤️ Gefällt" : "🤍 Merken"}</button>
+            {onWatched ? (
+              <button onClick={function(e) { e.stopPropagation(); onWatched(item); }} style={{
+                flex: 1, padding: "10px", borderRadius: 12,
+                background: isWatched ? "#4ade8022" : "#0d0d18",
+                border: isWatched ? "1px solid #4ade8055" : "1px solid #1a1a2e",
+                color: isWatched ? "#4ade80" : "#666", cursor: "pointer",
+                fontFamily: "'DM Sans'", fontWeight: 700, fontSize: 12, minWidth: 0,
+              }}>{isWatched ? "✅ Gesehen" : "👁 Gesehen"}</button>
+            ) : null}
             <button onClick={function(e) { e.stopPropagation(); onDislike(item.id); }} style={{
-              padding: "10px 18px", borderRadius: 12, background: "#0d0d18",
-              border: "1px solid #1a1a2e", color: "#444", cursor: "pointer", fontSize: 13,
+              padding: "10px 14px", borderRadius: 12, background: "#0d0d18",
+              border: "1px solid #1a1a2e", color: "#444", cursor: "pointer", fontSize: 12,
             }}>👎</button>
           </div>
+          {onSimilar ? (
+            <button onClick={function(e) { e.stopPropagation(); onSimilar(item); }} style={{
+              width: "100%", marginTop: 8, padding: "10px", borderRadius: 12,
+              background: "linear-gradient(135deg, #E5091411, #B01EFF11)",
+              border: "1px solid #B01EFF33",
+              color: "#B01EFF", cursor: "pointer",
+              fontFamily: "'DM Sans'", fontWeight: 700, fontSize: 12,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}>🔮 Mehr davon — ähnliche Titel finden</button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -507,8 +534,18 @@ function MainApp(props) {
   var _search = useState([]); var searchResults = _search[0]; var setSearchResults = _search[1];
   var _loading = useState(false); var loading = _loading[0]; var setLoading = _loading[1];
   var _searching = useState(false); var searching = _searching[0]; var setSearching = _searching[1];
+  var _similar = useState([]); var similarItems = _similar[0]; var setSimilar = _similar[1];
+  var _simTitle = useState(""); var similarTitle = _simTitle[0]; var setSimilarTitle = _simTitle[1];
+  var _simLoading = useState(false); var simLoading = _simLoading[0]; var setSimLoading = _simLoading[1];
+  var _histSearch = useState(""); var histSearch = _histSearch[0]; var setHistSearch = _histSearch[1];
+  var _histResults = useState([]); var histResults = _histResults[0]; var setHistResults = _histResults[1];
+  var _histSearching = useState(false); var histSearching = _histSearching[0]; var setHistSearching = _histSearching[1];
 
   var searchTimeout = useRef(null);
+  var histTimeout = useRef(null);
+
+  // Ensure profile has watched array
+  if (!profile.watched) { profile.watched = []; }
 
   function getProviderIds(platformFilter) {
     if (platformFilter) {
@@ -524,7 +561,19 @@ function MainApp(props) {
   }
 
   function getProfileGenres() {
-    var entries = Object.entries(profile.genres).filter(function(e) { return e[1] > 0; }).sort(function(a, b) { return b[1] - a[1]; });
+    // Combine onboarding genres with learned genres from watch history
+    var genreCounts = Object.assign({}, profile.genres || {});
+    // Boost genres from watched titles
+    if (profile.watched) {
+      profile.watched.forEach(function(w) {
+        if (w.genre_ids) {
+          w.genre_ids.forEach(function(gid) {
+            genreCounts[gid] = (genreCounts[gid] || 0) + 2;
+          });
+        }
+      });
+    }
+    var entries = Object.entries(genreCounts).filter(function(e) { return e[1] > 0; }).sort(function(a, b) { return b[1] - a[1]; });
     return entries.slice(0, 4).map(function(e) { return parseInt(e[0]); });
   }
 
@@ -588,7 +637,7 @@ function MainApp(props) {
     });
   }
 
-  useEffect(function() { loadData(); }, [mood, filterPlatform, profile.platforms.join(",")]);
+  useEffect(function() { loadData(); }, [mood, filterPlatform, profile.platforms.join(","), (profile.watched||[]).length]);
 
   function handleSearch(q) {
     setSearchQuery(q);
@@ -629,6 +678,60 @@ function MainApp(props) {
     });
   }
 
+  function handleWatched(item) {
+    updateProfile(function(p) {
+      var watched = p.watched || [];
+      var exists = watched.some(function(w) { return w.id === item.id; });
+      if (exists) {
+        // Remove from watched
+        watched = watched.filter(function(w) { return w.id !== item.id; });
+      } else {
+        // Add to watched (keep last 10)
+        var entry = {
+          id: item.id,
+          title: item.title || item.name || "Unbekannt",
+          poster_path: item.poster_path,
+          genre_ids: item.genre_ids || (item.genres ? item.genres.map(function(g) { return g.id; }) : []),
+          vote_average: item.vote_average,
+          media_type: item.media_type || (item.first_air_date ? "tv" : "movie"),
+          addedAt: Date.now(),
+        };
+        watched = [entry].concat(watched).slice(0, 10);
+      }
+      return Object.assign({}, p, { watched: watched });
+    });
+  }
+
+  function handleSimilar(item) {
+    var mediaType = item.media_type || (item.first_air_date ? "tv" : "movie");
+    var title = item.title || item.name || "Titel";
+    setSimilarTitle(title);
+    setSimLoading(true);
+    setSimilar([]);
+    setTab("similar");
+    getSimilar(apiKey, mediaType, item.id).then(function(data) {
+      var results = (data && data.results) || [];
+      results.forEach(function(r) { r.media_type = mediaType; });
+      setSimilar(results.filter(function(r) { return !profile.disliked.includes(r.id); }).slice(0, 15));
+      setSimLoading(false);
+    }).catch(function() { setSimLoading(false); });
+  }
+
+  function handleHistSearch(q) {
+    setHistSearch(q);
+    if (histTimeout.current) clearTimeout(histTimeout.current);
+    if (!q.trim()) { setHistResults([]); return; }
+    histTimeout.current = setTimeout(function() {
+      setHistSearching(true);
+      searchTitles(apiKey, q).then(function(data) {
+        var results = (data && data.results) || [];
+        results = results.filter(function(r) { return r.media_type === "movie" || r.media_type === "tv"; });
+        setHistResults(results.slice(0, 8));
+        setHistSearching(false);
+      }).catch(function() { setHistSearching(false); });
+    }, 400);
+  }
+
   function changeMood(m) {
     setMood(m);
     updateProfile(function(p) { return Object.assign({}, p, { currentMood: m }); });
@@ -644,7 +747,7 @@ function MainApp(props) {
     { id: "foryou", label: "Für dich", icon: "✨" },
     { id: "series", label: "Serien", icon: "📺" },
     { id: "films", label: "Filme", icon: "🎬" },
-    { id: "top", label: "Top", icon: "🏆" },
+    { id: "history", label: "Verlauf", icon: "📋" },
     { id: "search", label: "Suche", icon: "🔍" },
   ];
 
@@ -663,7 +766,7 @@ function MainApp(props) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {items.map(function(item, idx) {
-          return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} platform={getPlatformForItem(item)} rank={showRank ? idx : undefined} />;
+          return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} onWatched={handleWatched} onSimilar={handleSimilar} platform={getPlatformForItem(item)} rank={showRank ? idx : undefined} />;
         })}
       </div>
     );
@@ -687,7 +790,7 @@ function MainApp(props) {
       ) : null}
 
       {/* Mood selector */}
-      {tab !== "search" ? (
+      {tab !== "search" && tab !== "history" && tab !== "similar" ? (
         <div style={{ padding: "14px 18px 0" }}>
           <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4 }}>
             {MOODS.map(function(m) {
@@ -706,7 +809,7 @@ function MainApp(props) {
       ) : null}
 
       {/* Platform filter */}
-      {tab !== "search" ? (
+      {tab !== "search" && tab !== "history" && tab !== "similar" ? (
         <div style={{ padding: "10px 18px 0" }}>
           <div style={{ display: "flex", gap: 5, overflowX: "auto" }}>
             <button onClick={function() { setFP(null); }} style={{
@@ -754,11 +857,144 @@ function MainApp(props) {
           </div>
         ) : null}
 
-        {tab === "top" ? (
+        {tab === "history" ? (
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>🏆 Top bewertet</h3>
-            <p style={{ fontSize: 12, color: "#555", marginBottom: 14 }}>Die bestbewerteten Titel auf deinen Plattformen</p>
-            {renderList(topItems, true)}
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>📋 Zuletzt geschaut</h3>
+            <p style={{ fontSize: 12, color: "#555", marginBottom: 14 }}>Suche Titel und markiere sie als gesehen. Die App lernt aus deinem Verlauf.</p>
+
+            {/* Search to add */}
+            <input
+              type="text"
+              value={histSearch}
+              onChange={function(e) { handleHistSearch(e.target.value); }}
+              placeholder="Titel suchen und als gesehen markieren..."
+              style={{
+                width: "100%", padding: "12px 16px", borderRadius: 14,
+                background: "#12121f", border: "1px solid #2a2a3e", color: "#e8e6e1",
+                fontFamily: "'DM Sans'", fontSize: 14, outline: "none", marginBottom: 12,
+              }}
+            />
+            {histSearching ? <p style={{ color: "#555", fontSize: 12, textAlign: "center" }}>Suche...</p> : null}
+            {histResults.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {histResults.map(function(item) {
+                  return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} onWatched={handleWatched} onSimilar={handleSimilar} platform={null} />;
+                })}
+              </div>
+            ) : null}
+
+            {/* Watched list */}
+            {profile.watched && profile.watched.length > 0 ? (
+              <div>
+                <div style={{ fontSize: 12, color: "#555", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+                  Dein Verlauf ({profile.watched.length}/10)
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {profile.watched.map(function(w) {
+                    var poster = w.poster_path ? TMDB_IMG + w.poster_path : null;
+                    return (
+                      <div key={w.id} style={{ background: "#12121f", borderRadius: 14, padding: "12px 14px", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: 12 }}>
+                        {poster ? (
+                          <img src={poster} alt="" style={{ width: 36, height: 54, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: 36, height: 54, borderRadius: 8, background: "#1a1a2e", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: 16 }}>🎬</div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{w.title}</div>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 3 }}>
+                            <span style={{ fontSize: 10, color: "#f5c518", fontWeight: 900 }}>TMDB</span>
+                            <span style={{ fontSize: 12, color: w.vote_average >= 7.5 ? "#4ade80" : "#fbbf24", fontWeight: 800 }}>{Math.round((w.vote_average || 0) * 10) / 10}</span>
+                            <span style={{ fontSize: 10, color: "#444" }}>{w.media_type === "tv" ? "Serie" : "Film"}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button onClick={function() { handleSimilar(w); }} style={{
+                            padding: "8px 12px", borderRadius: 10,
+                            background: "#B01EFF11", border: "1px solid #B01EFF33",
+                            color: "#B01EFF", cursor: "pointer", fontSize: 11, fontFamily: "'DM Sans'", fontWeight: 700,
+                          }}>🔮 Ähnlich</button>
+                          <button onClick={function() { handleWatched(w); }} style={{
+                            padding: "8px", borderRadius: 10,
+                            background: "#0d0d18", border: "1px solid #1a1a2e",
+                            color: "#555", cursor: "pointer", fontSize: 12,
+                          }}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Genre analysis */}
+                {(function() {
+                  var genreCounts = {};
+                  profile.watched.forEach(function(w) {
+                    if (w.genre_ids) {
+                      w.genre_ids.forEach(function(gid) {
+                        genreCounts[gid] = (genreCounts[gid] || 0) + 1;
+                      });
+                    }
+                  });
+                  var sorted = Object.entries(genreCounts).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 5);
+                  if (sorted.length === 0) return null;
+                  var maxC = sorted[0][1];
+                  return (
+                    <div style={{ marginTop: 18, background: "#12121f", borderRadius: 14, padding: 16, border: "1px solid #1a1a2e" }}>
+                      <div style={{ fontSize: 12, color: "#555", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+                        🧠 Dein Geschmacksprofil (aus Verlauf)
+                      </div>
+                      {sorted.map(function(entry, i) {
+                        var g = GENRES_TMDB[parseInt(entry[0])];
+                        if (!g) return null;
+                        var colors = ["linear-gradient(90deg, #E50914, #B01EFF)", "#B01EFF", "#E50914", "#fbbf24", "#4ade80"];
+                        return (
+                          <div key={entry[0]} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                            <span style={{ fontSize: 16 }}>{g.emoji}</span>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{g.name}</div>
+                              <div style={{ height: 5, borderRadius: 3, background: "#1a1a2e", overflow: "hidden" }}>
+                                <div style={{ height: "100%", borderRadius: 3, width: (entry[1] / maxC * 100) + "%", background: colors[i] || "#B01EFF" }} />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: 30, color: "#444" }}>
+                <div style={{ fontSize: 40, marginBottom: 10 }}>📋</div>
+                <p style={{ fontSize: 13 }}>Noch keine Titel geschaut.</p>
+                <p style={{ fontSize: 12, color: "#333" }}>Suche oben nach Titeln und markiere sie als gesehen!</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "similar" ? (
+          <div>
+            <button onClick={function() { setTab("history"); }} style={{
+              background: "transparent", border: "none", color: "#B01EFF", cursor: "pointer",
+              fontFamily: "'DM Sans'", fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 10,
+            }}>← Zurück</button>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>🔮 Ähnlich wie "{similarTitle}"</h3>
+            <p style={{ fontSize: 12, color: "#555", marginBottom: 14 }}>Titel die dir auch gefallen könnten</p>
+            {simLoading ? (
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ color: "#B01EFF", fontSize: 24, marginBottom: 8 }}>⏳</div>
+                <p style={{ color: "#555", fontSize: 13 }}>Suche ähnliche Titel...</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {similarItems.map(function(item) {
+                  return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} onWatched={handleWatched} onSimilar={handleSimilar} platform={null} />;
+                })}
+              </div>
+            )}
+            {!simLoading && similarItems.length === 0 ? (
+              <p style={{ color: "#444", fontSize: 13, textAlign: "center", padding: 20 }}>Keine ähnlichen Titel gefunden.</p>
+            ) : null}
           </div>
         ) : null}
 
@@ -779,7 +1015,7 @@ function MainApp(props) {
             {searchResults.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {searchResults.map(function(item) {
-                  return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} platform={null} />;
+                  return <TitleCard key={item.id} item={item} profile={profile} apiKey={apiKey} onLike={handleLike} onDislike={handleDislike} onWatched={handleWatched} onSimilar={handleSimilar} platform={null} />;
                 })}
               </div>
             ) : null}

@@ -77,7 +77,7 @@ const MOODS = [
 // ── Storage ──
 var _mem = {};
 function sGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch(e) { try { retur
-function sSet(k, v) { var s = JSON.stringify(v); try { localStorage.setItem(k, s); } catch(e)
+function sSet(k, v) { var s = JSON.stringify(v); try { localStorage.setItem(k, s); } catch(e){ _mem[k] = s; } }
 function sDel(k) { try { localStorage.removeItem(k); } catch(e) { delete _mem[k]; } }
 // ── TMDB API ──
 function tmdbFetch(path, apiKey, params) {
